@@ -1,56 +1,8 @@
-#include<Windows.h>
-#include<iostream>
-
-
+#include"pestudy.h"
 using namespace std;
 
-typedef struct PE {
-	PIMAGE_DOS_HEADER dos_header;
-	PIMAGE_NT_HEADERS nt_headers;
-	PIMAGE_FILE_HEADER file_header;
-	PIMAGE_OPTIONAL_HEADER op_header;
-	PIMAGE_SECTION_HEADER sectionheader;
-	PIMAGE_IMPORT_DESCRIPTOR importdescriptor;
-};
-
-BOOL RVAtoFA(PE pe,DWORD RVA,DWORD &FA);//虚拟偏移转文件偏移
-
-BOOL FAtoRVA(PE pe, DWORD &RVA, DWORD FA);//文件偏移转虚拟偏移
-
-BOOL Readprocess(PCHAR dest_process,PVOID & buffer);//读取应用的字节码，放在堆中(buffer)，后期需要free
-
-BOOL CheckAndSet(PVOID buffer,PE &pe);//检查是否符合pe结构，如果不符合则返回0，否则将pe的各个指针指向正确的位置
-
-BOOL PrintEverything(PE &pe);//打印所有的结构,打印成功返回true
-
-BOOL PrintImport(PE pe);//打印导入表
-
-BOOL PrintExport(PE pe);//打印导出表
 
 
-int main() {
-	CHAR dest_process[] = "PROCS.DLL";
-	PE pe;
-	PVOID buffer = NULL;
-	if (!Readprocess(dest_process, buffer)) {
-		cout << "Open Failed!" << endl;
-		//delete[]buffer;
-		return 0;
-	}
-
-	if (!CheckAndSet(buffer, pe)) {
-		cout << "不是有效的PE格式！" << endl;
-		delete[]buffer;
-		return 0;
-	}
-	PrintEverything(pe);//打印各个字段
-	DWORD RVA, FA;
-	PrintImport(pe);
-	PrintExport(pe);
-	delete []buffer;
-	buffer = NULL;
-	return 0;
-}
 
 BOOL Readprocess(PCHAR dest_process, PVOID &buffer) {
 	DWORD filesize;
@@ -101,7 +53,7 @@ BOOL PrintEverything(PE &pe) {
 	cout << "\t\t\OPTIONAL_HEADER" << endl;
 	cout << "**************************************" << endl;
 	cout << "pe.op_header->Magic\t" << pe.op_header->Magic << endl;
-	cout << "pe.op_header->MajorLinkerVersion\t" << pe.op_header->MajorLinkerVersion << endl;
+	cout << "pe.op_header->MajorLinkerVersion\t" << (int)pe.op_header->MajorLinkerVersion << endl;
 	cout << "pe.op_header->SizeOfHeapCommit\t" << pe.op_header->SizeOfHeapCommit << endl;
 	cout << "pe.op_header->LoaderFlags\t" << pe.op_header->LoaderFlags << endl;
 	cout << "pe.op_header->NumberOfRvaAndSizes\t" << pe.op_header->NumberOfRvaAndSizes << endl;
@@ -134,8 +86,7 @@ BOOL PrintImport(PE pe) {
 	DWORD RVA, FA;
 	RVA = pe.op_header->DataDirectory[1].VirtualAddress;
 	RVAtoFA(pe, RVA, FA);
-	pe.importdescriptor = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)pe.dos_header + FA);
-	PIMAGE_IMPORT_DESCRIPTOR p = pe.importdescriptor;
+	PIMAGE_IMPORT_DESCRIPTOR p = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)pe.dos_header + FA);
 	PIMAGE_THUNK_DATA q = NULL;
 	cout << "**************************************" << endl;
 	cout << "\t\t\IMPORT_TABLE" << endl;
@@ -160,6 +111,7 @@ BOOL PrintImport(PE pe) {
 
 
 		p++;
+		cout << endl;
 	}
 	
 	return TRUE;
@@ -210,7 +162,7 @@ BOOL PrintExport(PE pe) {
 	RVAtoFA(pe, pe.op_header->DataDirectory[0].VirtualAddress, FA);
 	PIMAGE_EXPORT_DIRECTORY pexport = (PIMAGE_EXPORT_DIRECTORY)(FA+(BYTE *)pe.dos_header);
 	
-	if (pexport==NULL) {
+	if (pexport->AddressOfFunctions==NULL) {
 		cout << "No export!" << endl;
 		return FALSE;
 	}
@@ -218,7 +170,7 @@ BOOL PrintExport(PE pe) {
 	cout << "\t\t\EXPORT_TABLE" << endl;
 	cout << "**************************************" << endl;
 	RVAtoFA(pe, pexport->Name, FA);
-	cout <<"NAME:"<< (char*)(FA + (BYTE *)pe.dos_header) << endl;
+	cout <<"NAME:\t\t"<< (char*)(FA + (BYTE *)pe.dos_header) << endl;
 	RVAtoFA(pe, pexport->AddressOfFunctions, FA);
 	DWORD * addf = (DWORD *)(FA + (BYTE *)pe.dos_header);
 	RVAtoFA(pe, pexport->AddressOfNames, FA);
@@ -252,5 +204,54 @@ BOOL PrintExport(PE pe) {
 
 	delete[]ex;
 	
+	return TRUE;
+}
+BOOL Writeprocess(PCHAR filename, PVOID buffer, PE pe) {
+	HANDLE hFile = CreateFileA(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return FALSE;
+	}
+	PIMAGE_SECTION_HEADER psection = pe.sectionheader;
+	psection += pe.file_header->NumberOfSections - 1;
+	
+	DWORD filesize = psection->PointerToRawData + psection->SizeOfRawData;
+	DWORD writesize = 0;
+	WriteFile(hFile, buffer, filesize, &writesize, NULL);
+	CloseHandle(hFile);
+	return TRUE;
+}
+BOOL AddSection(PE &pe,PVOID &buffer) {
+	PBYTE src = (BYTE *)pe.dos_header + pe.dos_header->e_lfanew;
+	pe.dos_header->e_lfanew = sizeof(IMAGE_DOS_HEADER);
+	PBYTE dest = ((BYTE *)pe.dos_header + pe.dos_header->e_lfanew);
+	DWORD copsize = pe.op_header->SizeOfHeaders - (src - dest);
+	memcpy(dest, src, copsize);//将pe头上移
+	pe.nt_headers = (PIMAGE_NT_HEADERS)((PBYTE)pe.nt_headers - (src - dest));
+	pe.file_header = (PIMAGE_FILE_HEADER)((PBYTE)pe.file_header - (src - dest));
+	pe.op_header = (PIMAGE_OPTIONAL_HEADER)((PBYTE)pe.op_header - (src - dest));
+	pe.sectionheader = (PIMAGE_SECTION_HEADER)((PBYTE)pe.sectionheader - (src - dest));//重新设置pe结构
+	PIMAGE_SECTION_HEADER p= pe.sectionheader;
+	p += pe.file_header->NumberOfSections;
+	p->Characteristics = (p - 1)->Characteristics;
+	p->SizeOfRawData = (p - 1)->SizeOfRawData;
+	p->Misc.VirtualSize = (p - 1)->SizeOfRawData;
+	p->Name[0] = '.';
+	p->Name[1] = 'M';
+	p->Name[2] = 'y';
+	p->VirtualAddress = (p - 1)->VirtualAddress + (p - 1)->SizeOfRawData;
+	p->PointerToRawData = (p - 1)->PointerToRawData + (p - 1)->SizeOfRawData;
+	pe.op_header->SizeOfImage += p->Misc.VirtualSize;
+	PBYTE newbuffer = new BYTE[p->PointerToRawData + p->SizeOfRawData];//放到更大的堆栈中
+	ZeroMemory(newbuffer, p->PointerToRawData + p->SizeOfRawData);
+	memcpy(newbuffer, buffer, (p - 1)->PointerToRawData + (p - 1)->SizeOfRawData);
+	pe.dos_header = (PIMAGE_DOS_HEADER)((PBYTE)pe.dos_header - buffer + newbuffer);
+	pe.nt_headers = (PIMAGE_NT_HEADERS)((PBYTE)pe.nt_headers - buffer + newbuffer);
+	pe.file_header = (PIMAGE_FILE_HEADER)((PBYTE)pe.file_header - buffer + newbuffer);
+	pe.op_header = (PIMAGE_OPTIONAL_HEADER)((PBYTE)pe.op_header - buffer + newbuffer);
+	pe.sectionheader = (PIMAGE_SECTION_HEADER)((PBYTE)pe.sectionheader - buffer + newbuffer);
+	pe.file_header->NumberOfSections++;
+	
+	delete[]buffer;
+	buffer = newbuffer;
 	return TRUE;
 }
