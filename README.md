@@ -23,6 +23,4 @@ BOOL PrintExport(PE pe);//打印导出表
 
 BOOL AddSection(PE &pe,PVOID &buffer);//增加一个节
 
-BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize);//在新增加的节中添加代码，在本实验中，利用iat表编写了shellcode，因此，只适用于testfoo.exe程序。
-
-相关处理方法持续更新中。。。
+BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize);//在新增加的节中添加代码，可以在程序的任意位置添加shellcode，编译环境为vc++6.0
