@@ -232,14 +232,16 @@ BOOL AddSection(PE &pe,PVOID &buffer) {
 	pe.sectionheader = (PIMAGE_SECTION_HEADER)((PBYTE)pe.sectionheader - (src - dest));//重新设置pe结构
 	PIMAGE_SECTION_HEADER p= pe.sectionheader;
 	p += pe.file_header->NumberOfSections;
-	p->Characteristics = (p - 1)->Characteristics;
+	p->Characteristics = 0x60008060;
 	p->SizeOfRawData = (p - 1)->SizeOfRawData;
 	p->Misc.VirtualSize = (p - 1)->SizeOfRawData;
 	p->Name[0] = '.';
 	p->Name[1] = 'M';
 	p->Name[2] = 'y';
+	p->Name[3] = '\0';
 	p->VirtualAddress = (p - 1)->VirtualAddress + (p - 1)->SizeOfRawData;
 	p->PointerToRawData = (p - 1)->PointerToRawData + (p - 1)->SizeOfRawData;
+	ZeroMemory((PBYTE)(p + 1), sizeof IMAGE_SECTION_HEADER);
 	pe.op_header->SizeOfImage += p->Misc.VirtualSize;
 	PBYTE newbuffer = new BYTE[p->PointerToRawData + p->SizeOfRawData];//放到更大的堆栈中
 	ZeroMemory(newbuffer, p->PointerToRawData + p->SizeOfRawData);
@@ -253,5 +255,18 @@ BOOL AddSection(PE &pe,PVOID &buffer) {
 	
 	delete[]buffer;
 	buffer = newbuffer;
+	return TRUE;
+}
+
+BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize,DWORD extrodatasize) {
+	PIMAGE_SECTION_HEADER p = pe.sectionheader;
+	p += pe.file_header->NumberOfSections-1;
+
+	DWORD orgngep = pe.op_header->AddressOfEntryPoint;
+	pe.op_header->AddressOfEntryPoint = p->VirtualAddress;
+	PDWORD returnadd = (PDWORD)(Code + codesize - sizeof DWORD-extrodatasize);
+	*returnadd = orgngep-(pe.op_header->AddressOfEntryPoint+codesize-extrodatasize);
+	memcpy((PBYTE)pe.dos_header + p->PointerToRawData, Code, codesize);
+	
 	return TRUE;
 }

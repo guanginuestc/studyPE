@@ -12,7 +12,11 @@ typedef struct PE {
 };
 
 BOOL Writeprocess(PCHAR filename,PVOID buffer,PE pe);//写入到文件中
-
+/*
+filename：要写入的文件路径
+buffer:   包含程序信息的指针
+pe:		  指向各个PE头关键位置
+*/
 BOOL RVAtoFA(PE pe, DWORD RVA, DWORD &FA);//虚拟偏移转文件偏移
 
 BOOL FAtoRVA(PE pe, DWORD &RVA, DWORD FA);//文件偏移转虚拟偏移
@@ -28,3 +32,11 @@ BOOL PrintImport(PE pe);//打印导入表
 BOOL PrintExport(PE pe);//打印导出表
 
 BOOL AddSection(PE &pe,PVOID &buffer);//增加一个节
+
+BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize, DWORD extrodatasize);//在新增加的节中添加代码
+/*
+pe:指向pe结构的各个字段
+Code:shellcode内容
+codesize:shellcode的长度
+extrodatasize:附加数据的长度，例如字符串等都附着在后面
+*/
