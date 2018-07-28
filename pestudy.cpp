@@ -224,7 +224,7 @@ BOOL AddSection(PE &pe,PVOID &buffer) {
 	PBYTE src = (BYTE *)pe.dos_header + pe.dos_header->e_lfanew;
 	pe.dos_header->e_lfanew = sizeof(IMAGE_DOS_HEADER);
 	PBYTE dest = ((BYTE *)pe.dos_header + pe.dos_header->e_lfanew);
-	DWORD copsize = pe.op_header->SizeOfHeaders - (src - dest);
+	DWORD copsize = pe.op_header->SizeOfHeaders - (src - dest)-sizeof IMAGE_DOS_HEADER;
 	memcpy(dest, src, copsize);//将pe头上移
 	pe.nt_headers = (PIMAGE_NT_HEADERS)((PBYTE)pe.nt_headers - (src - dest));
 	pe.file_header = (PIMAGE_FILE_HEADER)((PBYTE)pe.file_header - (src - dest));
@@ -269,4 +269,115 @@ BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize,DWORD extrodatasize) {
 	memcpy((PBYTE)pe.dos_header + p->PointerToRawData, Code, codesize);
 	
 	return TRUE;
+}
+
+BOOL PrintRelocation(PE & pe)
+{
+	if (pe.op_header->DataDirectory[5].VirtualAddress == 0 && pe.op_header->DataDirectory[5].Size == 0) {
+		cout << "没有重定位表" << endl;
+		return FALSE;
+	}
+	else {
+		cout << "**************************************" << endl;
+		cout << "\t\t\RELOCATION_TABLE" << endl;
+		cout << "**************************************" << endl;
+	}
+	DWORD RVA, FA;
+	RVA = pe.op_header->DataDirectory[5].VirtualAddress;
+	RVAtoFA(pe, RVA, FA);
+	PIMAGE_BASE_RELOCATION reloca = (PIMAGE_BASE_RELOCATION)((BYTE *)pe.dos_header + FA);
+	while (reloca->SizeOfBlock != 0) {
+		cout << "reloca->VirtualAddress\t" << reloca->VirtualAddress << endl;
+		cout << "reloca->SizeOfBlock\t" << reloca->SizeOfBlock << endl;
+		reloca = (PIMAGE_BASE_RELOCATION)((PBYTE)reloca + reloca->SizeOfBlock);
+	}
+	return 0;
+}
+
+BOOL ExaToMem(PE &pe, PVOID & newbuffer)
+{
+	BOOL STATUS = FALSE;
+	//分配新的空间
+	newbuffer = (void*)malloc(pe.op_header->SizeOfImage+0x20);
+	if (newbuffer == NULL) {
+		cout << "No enough space" << endl;
+		return STATUS;
+	}
+	DWORD lpflOldProtect;
+	VirtualProtect(newbuffer, pe.op_header->SizeOfImage + 0x20,PAGE_EXECUTE_READWRITE,&lpflOldProtect);
+	ZeroMemory(newbuffer, pe.op_header->SizeOfImage+0x20);
+	//按照节表拉伸
+	memcpy(newbuffer, (PVOID)pe.dos_header, pe.op_header->SizeOfHeaders);
+	PIMAGE_SECTION_HEADER sec = pe.sectionheader;
+	for (int i = 0; i < pe.file_header->NumberOfSections; i++) {
+		memcpy((PBYTE)newbuffer + sec->VirtualAddress, (PBYTE)pe.dos_header + sec->PointerToRawData, sec->Misc.VirtualSize);
+		sec++;
+
+	}
+	DWORD RVA, FA;
+	//修复重定位表
+	if (pe.op_header->DataDirectory[5].VirtualAddress != 0 && pe.op_header->DataDirectory[5].Size != 0) {
+		
+		RVA = pe.op_header->DataDirectory[5].VirtualAddress;
+		//RVAtoFA(pe, RVA, FA);
+		PIMAGE_BASE_RELOCATION reloca = (PIMAGE_BASE_RELOCATION)((BYTE *)newbuffer + RVA);
+		DWORD toadd = (DWORD)newbuffer - pe.op_header->ImageBase;
+		PWORD offset = 0;
+		WORD num_offset = 0;
+		while (reloca->SizeOfBlock != 0) {
+			
+			num_offset = (reloca->SizeOfBlock - 8) / 2;
+			offset = (PWORD)((PBYTE)reloca + 8);
+			while (num_offset != 0) {
+				if (((*offset)&0xF000)==0x3000) {
+					RVA=reloca->VirtualAddress + ((*offset) & 0xFFF);
+					*(PDWORD)((PBYTE)newbuffer + RVA) += toadd;
+				}
+				offset++;
+				num_offset--;
+			}
+			reloca = (PIMAGE_BASE_RELOCATION)((PBYTE)reloca + reloca->SizeOfBlock);
+		}
+	}
+	//修复导入表
+	RVA = pe.op_header->DataDirectory[1].VirtualAddress;
+	//RVAtoFA(pe, RVA, FA);
+	PIMAGE_IMPORT_DESCRIPTOR p = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)newbuffer + RVA);
+	PIMAGE_THUNK_DATA q = NULL,iat=NULL;
+	while (p->Characteristics | p->FirstThunk | p->ForwarderChain | p->Name) {
+		//RVAtoFA(pe, p->Name, FA);
+		HMODULE h1= LoadLibraryA((char *)(p->Name+(PBYTE)newbuffer));//加载对应的dll并获取dll的首地址
+		//cout << "DLL NAME:\t" << (char *)(FA + (BYTE *)pe.dos_header) << endl;
+		//cout << "TimeStamp:\t" << hex << p->TimeDateStamp << endl;
+		//RVAtoFA(pe, p->OriginalFirstThunk, FA);
+		q = (PIMAGE_THUNK_DATA)((BYTE *)newbuffer + p->OriginalFirstThunk);
+		//RVAtoFA(pe, p->FirstThunk, FA);
+		iat = (PIMAGE_THUNK_DATA)((BYTE *)newbuffer + p->FirstThunk);
+		//cout << "导入函数序号\t" << "导入函数名称" << endl;
+		while (q->u1.Ordinal) {
+			if (q->u1.Ordinal & 0x80000000) {
+				//cout << "序号：" << (q->u1.Ordinal & 0x7FFFFFFF) << endl;
+				iat->u1.Function = (DWORD)GetProcAddress(h1, (PCHAR)(q->u1.Ordinal & 0x7FFFFFFF));
+			}
+			else {
+				//RVAtoFA(pe, q->u1.Ordinal & 0x7FFFFFFF, FA);
+				cout <<  hex  << "\tNAME:" << (char *)((iat->u1.AddressOfData & 0x7FFFFFFF) + (BYTE *)newbuffer + 2)<<"\t";
+				
+				iat->u1.Function = (DWORD)GetProcAddress(h1, (char *)((iat->u1.AddressOfData& 0x7FFFFFFF) + (BYTE *)newbuffer + 2));
+				cout << iat->u1.Function <<"\t"<<(int)&iat->u1.Function<< endl;
+			}
+			if (GetLastError() != 0) {
+				STATUS = FALSE;
+				return STATUS;
+			}
+			q++;
+			iat++;
+		}
+		p++;
+		cout << endl;
+	}
+	STATUS = TRUE;
+
+
+	return STATUS;
 }
