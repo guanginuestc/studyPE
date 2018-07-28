@@ -23,4 +23,17 @@ BOOL PrintExport(PE pe);//打印导出表
 
 BOOL AddSection(PE &pe,PVOID &buffer);//增加一个节
 
-BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize);//在新增加的节中添加代码，可以在程序的任意位置添加shellcode，编译环境为vc++6.0
+BOOL  AddCode(PE pe, PBYTE Code, DWORD codesize, DWORD extrodatasize);//在新增加的节中添加代码
+/*
+pe:指向pe结构的各个字段
+Code:shellcode内容
+codesize:shellcode的长度
+extrodatasize:附加数据的长度，例如字符串等都附着在后面
+*/
+
+BOOL PrintRelocation(PE & pe);//打印重定位表
+BOOL ExaToMem(PE &pe,PVOID &newbuffer);//将exe拉伸到内存中
+/*
+PE:获取PE结构
+newbuffer:指向拉伸后的空间
+*/
