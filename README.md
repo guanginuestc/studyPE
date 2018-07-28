@@ -32,6 +32,8 @@ extrodatasize:附加数据的长度，例如字符串等都附着在后面
 */
 
 BOOL PrintRelocation(PE & pe);//打印重定位表
+
+
 BOOL ExaToMem(PE &pe,PVOID &newbuffer);//将exe拉伸到内存中
 /*
 PE:获取PE结构
